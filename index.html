@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>カラス撃退AIモニター (ネット音源テスト版)</title>
+    <!-- 🧠 TensorFlow.js と COCO-SSD モデルの読み込み -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #222; color: #fff; margin: 0; padding: 20px; }
+        video { width: 100%; max-width: 500px; border-radius: 8px; background: #000; display: none; }
+        #status { font-size: 1.2rem; margin: 20px 0; color: #ffeb3b; }
+        #startBtn { font-size: 1.5rem; padding: 15px 30px; background-color: #4caf50; color: white; border: none; border-radius: 5px; cursor: pointer; margin: 20px 0; display: none; }
+        #log { font-size: 0.9rem; color: #aaa; height: 120px; overflow-y: scroll; border: 1px solid #444; padding: 10px; margin-top: 20px; text-align: left; }
+    </style>
+</head>
+<body>
+
+    <h1>🦅 カラス撃退モニター</h1>
+    <div id="status">AIモデルを読み込み中...</div>
+    
+    <!-- 🔘 スタートボタン -->
+    <button id="startBtn">🔴 監視を開始する</button>
+
+    <!-- 👁️ カメラ映像を表示する場所 -->
+    <video id="webcam" autoplay playsinline muted></video>
+
+    <!-- 🔊 松山市公開のカラス追い払い音源（CORS検証用） -->
+    <audio id="scareSound" src="https://www.city.matsuyama.ehime.jp/kurashi/kurashi/seikatsu/bika/karasumanual.files/karas_oi_1.mp3" preload="auto"></audio>
+
+    <div id="log">--- 動作ログ ---<br></div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const statusDiv = document.getElementById('status');
+        const startBtn = document.getElementById('startBtn');
+        const logDiv = document.getElementById('log');
+        const sound = document.getElementById('scareSound');
+        
+        let model = null;
+        let isPlaying = false; 
+        let wakeLock = null;   
+
+        function addLog(text) {
+            logDiv.innerHTML += text + "<br>";
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    addLog("🔋 画面のスリープ防止（Wake Lock）が有効になりました");
+                } else {
+                    addLog("⚠️ お使いのブラウザはスリープ防止機能に対応していません");
+                }
+            } catch (err) {
+                addLog(`⚠️ スリープ防止エラー: ${err.message}`);
+            }
+        }
+
+        async function setupCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment" }, 
+                    audio: false
+                });
+                video.srcObject = stream;
+                video.style.display = 'block'; 
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => { resolve(video); };
+                });
+            } catch (e) {
+                statusDiv.innerText = "カメラの起動に失敗しました。";
+                addLog("Error: " + e.message);
+            }
+        }
+
+        async function init() {
+            addLog("AIモデルを読み込んでいます...");
+            model = await cocoSsd.load();
+            statusDiv.innerText = "準備完了！ボタンを押してください。";
+            addLog("AIモデルの読み込みが完了しました。");
+            startBtn.style.display = 'inline-block';
+        }
+
+        startBtn.addEventListener('click', async () => {
+            startBtn.style.display = 'none'; 
+            statusDiv.innerText = "カメラを起動中...";
+            
+            await requestWakeLock();
+            
+            // 音声再生のテストと初期化
+            sound.play().then(() => {
+                sound.pause();
+                sound.currentTime = 0;
+                addLog("🔊 音声データの接続テスト成功");
+            }).catch(e => {
+                addLog("❌ 音声読み込みエラー（CORS制限の可能性があります）: " + e.message);
+            });
+
+            await setupCamera();
+            statusDiv.innerText = "🦉 監視中...";
+            addLog("自動監視を開始しました。");
+            
+            detectFrame();
+        });
+
+        async function detectFrame() {
+            const predictions = await model.detect(video);
+            const birdFound = predictions.some(p => p.class === 'bird');
+
+            if (birdFound) {
+                addLog("💥 鳥を検知しました！");
+                
+                if (!isPlaying) {
+                    isPlaying = true;
+                    addLog("🔊 撃退音を再生します（10秒間）");
+                    
+                    sound.play().catch(e => addLog("再生失敗: " + e.message));
+
+                    setTimeout(() => {
+                        sound.pause();
+                        sound.currentTime = 0;
+                        isPlaying = false;
+                        addLog("⏹️ 撃退音を停止しました。監視に戻ります。");
+                    }, 10000);
+                }
+            }
+
+            requestAnimationFrame(detectFrame);
+        }
+
+        init();
+    </script>
+</body>
+</html>
